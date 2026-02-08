@@ -1,0 +1,91 @@
+# Docker
+# Build and push an image to Azure Container Registry
+# https://docs.microsoft.com/azure/devops/pipelines/languages/docker
+
+trigger:
+- main
+
+resources:
+- repo: self
+
+variables:
+  # Container registry service connection established during pipeline creation
+  dockerRegistryServiceConnection: '1c2945c6-be50-4332-a362-34103e6032c2'
+  imageRepository: 'vivaanjamaiyarhelmnodeapi'
+  containerRegistry: 'demoaz.azurecr.io'
+  dockerfilePath: '$(Build.SourcesDirectory)/Dockerfile'
+  tag: '$(Build.BuildId)'
+
+pool:
+   name: 'azureagent'
+
+stages:
+- stage: Build
+  displayName: Build stage
+  jobs:
+  - job: Build
+    displayName: Build
+    
+    steps:
+    - task: Docker@2
+      displayName: Build an image to container registry
+      inputs:
+        containerRegistry: '$(dockerRegistryServiceConnection)'
+        repository: '$(imageRepository)'
+        command: 'build'
+        Dockerfile: '**/Dockerfile'
+        tags: '$(tag)'
+
+- stage: Push
+  displayName: Push stage
+  jobs:
+  - job: Push
+    displayName: Push
+    
+    steps:
+    - task: Docker@2
+      displayName: Push an image to container registry
+      inputs:
+        containerRegistry: '$(dockerRegistryServiceConnection)'
+        repository: '$(imageRepository)'
+        command: 'push'
+        tags: '$(tag)'
+
+
+- stage: Helm
+  displayName: Helm stage
+  jobs:
+  - job: Update
+    displayName: Update
+    steps:
+     - task: HelmInstaller@1
+       inputs:
+        helmVersionToInstall: 'latest'
+
+- stage: Helm Deploy
+  displayName: Helm Deploy
+  jobs:
+  - job: Deploy
+    displayName: Deploy
+    steps:
+    - task: HelmDeploy@1
+      inputs:
+          azureSubscriptionForACR: 'helm-connection'
+          azureResourceGroupForACR: 'demo'
+          azureContainerRegistry: 'demoaz.azurecr.io'
+          command: 'package'
+          chartPath: 'helm'
+          chartNameForACR: 'helm'
+          chartPathForACR: 'helm'
+
+- stage: Helm Publish
+  displayName: Helm Publish
+  jobs:
+  - job: Publish
+    displayName: Publish
+    steps:
+    - task: PublishPipelineArtifact@1
+      inputs:
+        targetPath: '$(Build.ArtifactStagingDirectory)'
+        artifact: 'helmapi'
+        publishLocation: 'pipeline'
