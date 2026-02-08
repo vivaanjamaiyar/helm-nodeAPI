@@ -58,20 +58,42 @@ stages:
   - job: HelmInstallandDeploy
     displayName: HelmInstallandDeploy
     steps:
-     - task: HelmInstaller@1
-       inputs:
-        helmVersionToInstall: 'latest'
 
+    - task: HelmInstaller@1
+      displayName: Install Helm
+      inputs:
+        helmVersionToInstall: '3.14.4'   # pin a stable v3 version
 
-     - task: HelmDeploy@1
-       inputs:
-          azureSubscriptionForACR: 'helm-connection'
-          azureResourceGroupForACR: 'demo'
-          azureContainerRegistry: 'demoaz.azurecr.io'
-          command: 'package'
-          chartPath: 'helm'
-          chartNameForACR: 'helm'
-          chartPathForACR: 'helm'
+    - bash: |
+        set -e
+        helm version
+        mkdir -p $(Build.ArtifactStagingDirectory)/charts
+
+        # Package chart
+        helm package helm --destination $(Build.ArtifactStagingDirectory)/charts
+        ls -la $(Build.ArtifactStagingDirectory)/charts
+      displayName: Package Helm chart
+
+    # Login to Azure and ACR (uses your existing service connection)
+    - task: AzureCLI@2
+      displayName: Login to ACR
+      inputs:
+        azureSubscription: 'helm-connection'
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          az acr login --name demoaz
+
+    # Push packaged chart to ACR as OCI artifact
+    - bash: |
+        set -e
+        CHART_TGZ=$(ls $(Build.ArtifactStagingDirectory)/charts/*.tgz | head -n 1)
+        echo "Chart package: $CHART_TGZ"
+
+        # Helm OCI push (modern method)
+        helm registry login demoaz.azurecr.io
+        helm push "$CHART_TGZ" oci://demoaz.azurecr.io/helm
+      displayName: Push Helm chart to ACR (OCI)
 
 - stage: HelmPublish
   displayName: Helm Publish
@@ -81,6 +103,6 @@ stages:
     steps:
     - task: PublishPipelineArtifact@1
       inputs:
-        targetPath: '$(Build.ArtifactStagingDirectory)'
+        targetPath: '$(Build.ArtifactStagingDirectory)/charts'
         artifact: 'helmapi'
         publishLocation: 'pipeline'
