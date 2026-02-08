@@ -62,7 +62,7 @@ stages:
        inputs:
         helmVersionToInstall: 'latest'
 
-- stage: Helm Deploy
+- stage: HelmDeploy
   displayName: Helm Deploy
   jobs:
   - job: Deploy
@@ -78,7 +78,7 @@ stages:
           chartNameForACR: 'helm'
           chartPathForACR: 'helm'
 
-- stage: Helm Publish
+- stage: HelmPublish
   displayName: Helm Publish
   jobs:
   - job: Publish
