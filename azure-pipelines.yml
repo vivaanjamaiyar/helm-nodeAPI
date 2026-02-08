@@ -52,24 +52,19 @@ stages:
         tags: '$(tag)'
 
 
-- stage: Helm
-  displayName: Helm stage
+- stage: HelmInstallandDeploy
+  displayName: HelmInstallandDeploy
   jobs:
-  - job: Update
-    displayName: Update
+  - job: HelmInstallandDeploy
+    displayName: HelmInstallandDeploy
     steps:
      - task: HelmInstaller@1
        inputs:
         helmVersionToInstall: 'latest'
 
-- stage: HelmDeploy
-  displayName: Helm Deploy
-  jobs:
-  - job: Deploy
-    displayName: Deploy
-    steps:
-    - task: HelmDeploy@1
-      inputs:
+
+     - task: HelmDeploy@1
+       inputs:
           azureSubscriptionForACR: 'helm-connection'
           azureResourceGroupForACR: 'demo'
           azureContainerRegistry: 'demoaz.azurecr.io'
