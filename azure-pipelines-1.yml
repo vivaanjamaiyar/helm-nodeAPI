@@ -104,8 +104,8 @@ stages:
         arguments: >
           --wait
           --timeout 20m0s
-          --kube-api-qps 50
-          --kube-api-burst 100
+          --qps 50
+          --burst-limit 100
           --set image.repository=demoaz.azurecr.io/vivaanjamaiyarhelmnodeapi
           --set image.tag=$(IMAGE_TAG)
           --set imagePullSecrets[0].name=acr-secret
