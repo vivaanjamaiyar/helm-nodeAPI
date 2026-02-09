@@ -16,7 +16,7 @@ stages:
       inputs:
         buildType: 'specific'
         project: 'helm-nodeAPI'                # 👈 CHANGE ME (or remove if same project)
-        definition: 'helm-nodeAPI-CD'              # 👈 ID of your build pipeline
+        definition: 'helm-nodeAPI'              # 👈 ID of your build pipeline
         buildVersionToDownload: 'latest'
         artifactName: 'helm-chart'               # Must match your first pipeline
         targetPath: '$(Pipeline.Workspace)/helm'
