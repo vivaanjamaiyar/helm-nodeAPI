@@ -1,7 +1,3 @@
-# Docker
-# Build and push an image to Azure Container Registry
-# https://docs.microsoft.com/azure/devops/pipelines/languages/docker
-
 trigger:
 - main
 
@@ -9,26 +5,40 @@ resources:
 - repo: self
 
 variables:
-  # Container registry service connection established during pipeline creation
-  dockerRegistryServiceConnection: '1c2945c6-be50-4332-a362-34103e6032c2'
+  # ---- Docker settings ----
+  dockerRegistryServiceConnection: '1c2945c6-be50-4332-a362-34103e6032c2'   # your ACR service connection (Docker@2)
   imageRepository: 'vivaanjamaiyarhelmnodeapi'
   containerRegistry: 'demoaz.azurecr.io'
   dockerfilePath: '$(Build.SourcesDirectory)/Dockerfile'
   tag: '$(Build.BuildId)'
 
-pool:
-   name: 'azureagent'
+  # ---- Helm/ACR settings ----
+  acrName: 'demoaz'                          # ACR resource name (no .azurecr.io)
+  acrLoginServer: 'demoaz.azurecr.io'        # ACR login server
+  helmChartDir: 'helm'                       # folder containing Chart.yaml
+  helmOciRepo: 'helm'                        # ACR repo path: oci://<loginServer>/<helmOciRepo>
+  helmVersion: '3.14.4'                      # pin version for stability (avoid "latest")
+
+  # ---- Azure RM service connection for AzureCLI@2 ----
+  azureSubscriptionServiceConnection: 'helm-connection'  # CHANGE_ME if different
 
 stages:
+
+# -----------------------------
+# 1) BUILD DOCKER IMAGE
+# -----------------------------
 - stage: Build
   displayName: Build stage
   jobs:
   - job: Build
     displayName: Build
-    
+    pool:
+      name: 'azureagent'   # your self-hosted pool
     steps:
+    - checkout: self
+
     - task: Docker@2
-      displayName: Build an image to container registry
+      displayName: Build image
       inputs:
         containerRegistry: '$(dockerRegistryServiceConnection)'
         repository: '$(imageRepository)'
@@ -36,15 +46,23 @@ stages:
         Dockerfile: '**/Dockerfile'
         tags: '$(tag)'
 
+
+# -----------------------------
+# 2) PUSH DOCKER IMAGE
+# -----------------------------
 - stage: Push
   displayName: Push stage
+  dependsOn: Build
   jobs:
   - job: Push
     displayName: Push
-    
+    pool:
+      name: 'azureagent'   # your self-hosted pool
     steps:
+    - checkout: self
+
     - task: Docker@2
-      displayName: Push an image to container registry
+      displayName: Push image
       inputs:
         containerRegistry: '$(dockerRegistryServiceConnection)'
         repository: '$(imageRepository)'
@@ -52,57 +70,71 @@ stages:
         tags: '$(tag)'
 
 
-- stage: HelmInstallandDeploy
-  displayName: HelmInstallandDeploy
+# --------------------------------------------------------
+# 3) PACKAGE + PUSH HELM CHART TO ACR (FAST & RELIABLE)
+#    Runs on Microsoft-hosted agent to avoid slow uploads
+#    and to ensure Azure CLI exists.
+# --------------------------------------------------------
+- stage: HelmPackageAndPush
+  displayName: Helm Package & Push (OCI) to ACR
+  dependsOn: Push
   jobs:
-  - job: HelmInstallandDeploy
-    displayName: HelmInstallandDeploy
-    steps:
+  - job: Helm
+    displayName: Package & Push Helm chart
+    pool:
+      vmImage: 'ubuntu-latest'   # Microsoft-hosted agent (fast + az available)
 
+    steps:
+    - checkout: self
+
+    # Install Helm (HelmInstaller@1 supports helmVersionToInstall) [2](https://learn.microsoft.com/en-us/azure/devops/pipelines/tasks/reference/azure-cli-v2?view=azure-pipelines)
     - task: HelmInstaller@1
       displayName: Install Helm
       inputs:
-        helmVersionToInstall: '3.14.4'   # pin a stable v3 version
+        helmVersionToInstall: '$(helmVersion)'
 
+    # Package chart (avoid HelmDeploy@1 package due to --save issue) [1](https://the-pi-guy.com/blog/troubleshooting_helm_installations_common_issues_and_solutions/)
     - bash: |
-        set -e
+        set -euo pipefail
+        echo "Helm version:"
         helm version
-        mkdir -p $(Build.ArtifactStagingDirectory)/charts
-
-        # Package chart
-        helm package helm --destination $(Build.ArtifactStagingDirectory)/charts
-        ls -la $(Build.ArtifactStagingDirectory)/charts
+        echo "Packaging chart from: $(helmChartDir)"
+        mkdir -p "$(Build.ArtifactStagingDirectory)/charts"
+        helm package "$(helmChartDir)" --destination "$(Build.ArtifactStagingDirectory)/charts"
+        echo "Packaged charts:"
+        ls -lah "$(Build.ArtifactStagingDirectory)/charts"
       displayName: Package Helm chart
 
-    # Login to Azure and ACR (uses your existing service connection)
+    # Login to ACR and push as OCI artifact (modern supported approach) [4](https://jhooq.com/helm-install-unknown-flag/)
+    # AzureCLI@2 task runs az commands via service connection [3](https://learn.microsoft.com/en-us/azure/devops/pipelines/tasks/reference/?view=azure-pipelines)
     - task: AzureCLI@2
-      displayName: Login to ACR
+      displayName: Login + Push Helm chart to ACR (OCI)
       inputs:
-        azureSubscription: 'helm-connection'
+        azureSubscription: '$(azureSubscriptionServiceConnection)'
         scriptType: bash
         scriptLocation: inlineScript
         inlineScript: |
-          az acr login --name demoaz
+          set -euo pipefail
 
-    # Push packaged chart to ACR as OCI artifact
-    - bash: |
-        set -e
-        CHART_TGZ=$(ls $(Build.ArtifactStagingDirectory)/charts/*.tgz | head -n 1)
-        echo "Chart package: $CHART_TGZ"
+          echo "Getting ACR access token..."
+          TOKEN=$(az acr login --name "$(acrName)" --expose-token --output tsv --query accessToken)
 
-        # Helm OCI push (modern method)
-        helm registry login demoaz.azurecr.io
-        helm push "$CHART_TGZ" oci://demoaz.azurecr.io/helm
-      displayName: Push Helm chart to ACR (OCI)
+          echo "Logging Helm into ACR (OCI)..."
+          # username can be any GUID when using an access token
+          helm registry login "$(acrLoginServer)" \
+            --username 00000000-0000-0000-0000-000000000000 \
+            --password "$TOKEN"
 
-- stage: HelmPublish
-  displayName: Helm Publish
-  jobs:
-  - job: Publish
-    displayName: Publish
-    steps:
+          CHART_TGZ=$(ls "$(Build.ArtifactStagingDirectory)"/charts/*.tgz | head -n 1)
+          echo "Pushing chart: $CHART_TGZ"
+          helm push "$CHART_TGZ" "oci://$(acrLoginServer)/$(helmOciRepo)"
+
+          echo "Done."
+
+    # Publish packaged chart as pipeline artifact (optional but useful)
     - task: PublishPipelineArtifact@1
+      displayName: Publish Helm chart artifact
       inputs:
         targetPath: '$(Build.ArtifactStagingDirectory)/charts'
-        artifact: 'helmapi'
+        artifact: 'helm-chart'
         publishLocation: 'pipeline'
