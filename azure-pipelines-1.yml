@@ -106,7 +106,7 @@ stages:
           --timeout 20m0s
           --qps 50
           --burst-limit 100
-          --set image.repository=demoaz.azurecr.io/vivaanjamaiyarhelmnodeapi
+          --set image.repository=demoaz.azurecr.io
           --set image.tag=$(IMAGE_TAG)
           --set imagePullSecrets[0].name=acr-secret
           --debug
