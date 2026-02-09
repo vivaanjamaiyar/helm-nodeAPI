@@ -1,0 +1,50 @@
+trigger: none   # manual or triggered from first pipeline
+
+stages:
+- stage: Deploy
+  displayName: Deploy Helm Chart to AKS
+  jobs:
+  - job: DeployHelm
+    displayName: Deploy Helm Release
+    pool:
+      vmImage: ubuntu-latest
+
+    steps:
+    # 1. Download artifact from previous pipeline
+    - task: DownloadPipelineArtifact@2
+      displayName: Download Helm chart artifact
+      inputs:
+        buildType: 'specific'
+        project: '<PROJECT_NAME>'                # 👈 CHANGE ME (or remove if same project)
+        definition: '<PIPELINE_ID>'              # 👈 ID of your build pipeline
+        buildVersionToDownload: 'latest'
+        artifactName: 'helm-chart'               # Must match your first pipeline
+        targetPath: '$(Pipeline.Workspace)/helm'
+
+    # 2. Install Helm (if needed)
+    - task: HelmInstaller@1
+      displayName: Install Helm
+      inputs:
+        helmVersionToInstall: '3.14.4'
+
+    # 3. Deploy Helm chart using HelmDeploy@1
+    # Microsoft Learn confirms HelmDeploy supports "upgrade with install=true" [1](https://stackoverflow.com/questions/76266309/how-can-i-solve-indentation-problem-in-azure-yaml-pipeline)
+    - task: HelmDeploy@1
+      displayName: Deploy Helm chart
+      inputs:
+        connectionType: 'Kubernetes Service Connection'
+        kubernetesServiceConnection: 'aks-connection'     # 👈 CHANGE ME
+        namespace: 'default'
+
+        command: 'upgrade'
+        install: true       # Install if not exists
+
+        # chart you downloaded
+        chartType: 'FilePath'
+        chartPath: '$(Pipeline.Workspace)/helm/*.tgz'
+
+        # release name inside AKS
+        releaseName: 'myapp'
+
+        # values file override (optional)
+        valueFile: ''
