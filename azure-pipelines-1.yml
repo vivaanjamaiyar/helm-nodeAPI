@@ -15,10 +15,10 @@ stages:
       displayName: Download Helm chart artifact
       inputs:
         buildType: 'specific'
-        project: 'helm-nodeAPI'                # 👈 CHANGE ME (or remove if same project)
-        definition: 'helm-nodeAPI'              # 👈 ID of your build pipeline
+        project: 'helm-nodeAPI'
+        definition: '3'
         buildVersionToDownload: 'latest'
-        artifactName: 'helm-chart'               # Must match your first pipeline
+        artifactName: 'helm-chart'
         targetPath: '$(Pipeline.Workspace)/helm'
 
     # 2. Install Helm (if needed)
