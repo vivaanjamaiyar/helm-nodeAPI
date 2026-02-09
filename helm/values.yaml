@@ -4,7 +4,7 @@
 
 application:
   author: roushan
-  name: nodesampleapi #Aadhar Vault Manager
+  name: vivaanjamaiyarhelmnodeapi #Aadhar Vault Manager
   type: api
 
 replicaCount: 1
