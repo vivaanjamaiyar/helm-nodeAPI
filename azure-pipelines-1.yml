@@ -10,41 +10,59 @@ stages:
       name: 'azureagent'
 
     steps:
-    # 1. Download artifact from previous pipeline
+    - checkout: none
+
+    # 1) Download artifact from previous pipeline
     - task: DownloadPipelineArtifact@2
       displayName: Download Helm chart artifact
       inputs:
-        buildType: 'specific'
+        buildType: 'specific'                 # download from another pipeline run [1](https://developercommunity.visualstudio.com/content/problem/401815/helminstaller.html)
         project: 'helm-nodeAPI'
-        definition: '3'
-        buildVersionToDownload: 'latest'
+        definition: '3'                       # pipeline definition ID [1](https://developercommunity.visualstudio.com/content/problem/401815/helminstaller.html)
+        buildVersionToDownload: 'latest'      # latest successful run [1](https://developercommunity.visualstudio.com/content/problem/401815/helminstaller.html)
         artifactName: 'helm-chart'
-        targetPath: '$(Pipeline.Workspace)/helm'
+        targetPath: '$(Pipeline.Workspace)/helm'  # where the artifact will be downloaded [1](https://developercommunity.visualstudio.com/content/problem/401815/helminstaller.html)
 
-    # 2. Install Helm (if needed)
+    # 2) Debug + locate the chart package and store exact file path
+    - bash: |
+        set -euo pipefail
+        echo "Listing downloaded artifact folder:"
+        ls -lah "$(Pipeline.Workspace)/helm" || true
+        echo "Searching for .tgz under $(Pipeline.Workspace)/helm ..."
+        find "$(Pipeline.Workspace)/helm" -type f -name "*.tgz" -print
+
+        CHART_PATH="$(find "$(Pipeline.Workspace)/helm" -type f -name "*.tgz" | head -n 1)"
+        if [ -z "${CHART_PATH:-}" ]; then
+          echo "ERROR: No .tgz found under $(Pipeline.Workspace)/helm"
+          echo "Check the artifact contents and folder structure."
+          exit 1
+        fi
+
+        echo "Using chart: $CHART_PATH"
+        echo "##vso[task.setvariable variable=CHART_PATH]$CHART_PATH"
+      displayName: "Locate downloaded Helm chart (.tgz)"
+
+    # 3) Install Helm (if needed)
     - task: HelmInstaller@1
       displayName: Install Helm
       inputs:
         helmVersionToInstall: '3.14.4'
 
-    # 3. Deploy Helm chart using HelmDeploy@1
-    # Microsoft Learn confirms HelmDeploy supports "upgrade with install=true" [1](https://stackoverflow.com/questions/76266309/how-can-i-solve-indentation-problem-in-azure-yaml-pipeline)
+    # 4) Deploy Helm chart using HelmDeploy@1
     - task: HelmDeploy@1
       displayName: Deploy Helm chart
       inputs:
-        connectionType: 'Kubernetes Service Connection'
-        kubernetesServiceConnection: 'aks-connection'     # 👈 CHANGE ME
+        connectionType: 'Kubernetes Service Connection'     # supported connection type [2](https://github.com/microsoft/azure-pipelines-tasks/issues/21393)
+        kubernetesServiceConnection: 'aks-connection'
         namespace: 'default'
 
-        command: 'upgrade'
-        install: true       # Install if not exists
+        command: 'upgrade'                                  # supported command [2](https://github.com/microsoft/azure-pipelines-tasks/issues/21393)
+        install: true                                       # install if release doesn't exist [2](https://github.com/microsoft/azure-pipelines-tasks/issues/21393)
 
-        # chart you downloaded
-        chartType: 'FilePath'
-        chartPath: '$(Pipeline.Workspace)/helm/*.tgz'
-
-        # release name inside AKS
         releaseName: 'myapp'
 
-        # values file override (optional)
+        chartType: 'FilePath'                               # file path chart type [2](https://github.com/microsoft/azure-pipelines-tasks/issues/21393)
+        chartPath: '$(CHART_PATH)'                          # exact file path (no wildcard)
+
+        # Optional values override file (leave empty if not used)
         valueFile: ''
