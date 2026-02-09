@@ -16,14 +16,14 @@ stages:
     - task: DownloadPipelineArtifact@2
       displayName: Download Helm chart artifact
       inputs:
-        buildType: 'specific'                 # download from another pipeline run [1](https://developercommunity.visualstudio.com/content/problem/401815/helminstaller.html)
+        buildType: 'specific'
         project: 'helm-nodeAPI'
-        definition: '3'                       # pipeline definition ID [1](https://developercommunity.visualstudio.com/content/problem/401815/helminstaller.html)
-        buildVersionToDownload: 'latest'      # latest successful run [1](https://developercommunity.visualstudio.com/content/problem/401815/helminstaller.html)
+        definition: '3'
+        buildVersionToDownload: 'latest'
         artifactName: 'helm-chart'
-        targetPath: '$(Pipeline.Workspace)/helm'  # where the artifact will be downloaded [1](https://developercommunity.visualstudio.com/content/problem/401815/helminstaller.html)
+        targetPath: '$(Pipeline.Workspace)/helm'
 
-    # 2) Debug + locate the chart package and store exact file path
+    # 2) Locate the chart package and store exact file path
     - bash: |
         set -euo pipefail
         echo "Listing downloaded artifact folder:"
@@ -42,27 +42,86 @@ stages:
         echo "##vso[task.setvariable variable=CHART_PATH]$CHART_PATH"
       displayName: "Locate downloaded Helm chart (.tgz)"
 
-    # 3) Install Helm (if needed)
+    # 3) Install Helm
     - task: HelmInstaller@1
       displayName: Install Helm
       inputs:
         helmVersionToInstall: '3.14.4'
 
-    # 4) Deploy Helm chart using HelmDeploy@1
+    # 4) Query ACR to get the latest numeric tag for the image repo
+    - task: AzureCLI@2
+      displayName: "Get latest image tag from ACR (vivaanjamaiyarhelmnodeapi)"
+      inputs:
+        azureSubscription: 'helm-connection'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          set -euo pipefail
+          
+          ACR_NAME="demoaz"
+          IMAGE_REPO="vivaanjamaiyarhelmnodeapi"
+          
+          echo "Fetching tags from ACR '${ACR_NAME}' repo '${IMAGE_REPO}'..."
+          
+          # Get tags as lines, keep only numeric tags, sort descending numerically, take top
+          TAGS=$(az acr repository show-tags -n "$ACR_NAME" --repository "$IMAGE_REPO" -o tsv || true)
+          
+          if [ -z "${TAGS:-}" ]; then
+            echo "ERROR: No tags returned from ACR. Check permissions or repo name."
+            exit 1
+          fi
+          
+          LATEST_TAG=$(echo "$TAGS" | grep -E '^[0-9]+$' | sort -nr | head -n 1)
+          
+          if [ -z "${LATEST_TAG:-}" ]; then
+            echo "ERROR: Could not determine latest numeric tag. Tags returned were:"
+            echo "$TAGS"
+            exit 1
+          fi
+          
+          echo "Latest numeric image tag found: $LATEST_TAG"
+          echo "##vso[task.setvariable variable=IMAGE_TAG]$LATEST_TAG"
+
+    # 5) Deploy Helm chart using HelmDeploy@1 with overrides
     - task: HelmDeploy@1
       displayName: Deploy Helm chart
       inputs:
-        connectionType: 'Kubernetes Service Connection'     # supported connection type [2](https://github.com/microsoft/azure-pipelines-tasks/issues/21393)
+        connectionType: 'Kubernetes Service Connection'
         kubernetesServiceConnection: 'aks-connection'
         namespace: 'default'
 
-        command: 'upgrade'                                  # supported command [2](https://github.com/microsoft/azure-pipelines-tasks/issues/21393)
-        install: true                                       # install if release doesn't exist [2](https://github.com/microsoft/azure-pipelines-tasks/issues/21393)
-
+        command: 'upgrade'
+        install: true
         releaseName: 'myapp'
 
-        chartType: 'FilePath'                               # file path chart type [2](https://github.com/microsoft/azure-pipelines-tasks/issues/21393)
-        chartPath: '$(CHART_PATH)'                          # exact file path (no wildcard)
+        chartType: 'FilePath'
+        chartPath: '$(CHART_PATH)'
 
-        # Optional values override file (leave empty if not used)
         valueFile: ''
+
+        # ✅ Force image repo/tag and pull secret at deploy time (no chart edits needed)
+        # ✅ Add timeout/QPS/Burst to avoid rate limiter timeouts
+        arguments: >
+          --wait
+          --timeout 20m0s
+          --kube-api-qps 50
+          --kube-api-burst 100
+          --set image.repository=demoaz.azurecr.io/vivaanjamaiyarhelmnodeapi
+          --set image.tag=$(IMAGE_TAG)
+          --set imagePullSecrets[0].name=acr-secret
+          --debug
+
+    # 6) Optional verification step: show deployed image + pod status
+    - bash: |
+        set -euo pipefail
+        echo "Deployments in default:"
+        kubectl get deploy -n default
+
+        echo "Pods in default:"
+        kubectl get pods -n default
+
+        echo "Image used by myapp deployment:"
+        # Deployment name may vary; list images for all deployments with the Helm release label if available
+        kubectl get deploy -n default -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.template.spec.containers[0].image}{"\n"}{end}' | sort
+      displayName: "Verify deployment image + pods"
+      condition: always()
