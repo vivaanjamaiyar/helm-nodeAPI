@@ -7,7 +7,7 @@ stages:
   - job: DeployHelm
     displayName: Deploy Helm Release
     pool:
-      vmImage: ubuntu-latest
+      name: 'azureagent'
 
     steps:
     # 1. Download artifact from previous pipeline
