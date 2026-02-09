@@ -82,7 +82,7 @@ stages:
   - job: Helm
     displayName: Package & Push Helm chart
     pool:
-      vmImage: 'ubuntu-latest'   # Microsoft-hosted agent (fast + az available)
+     name: 'azureagent'   # Microsoft-hosted agent (fast + az available)
 
     steps:
     - checkout: self
